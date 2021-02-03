@@ -17,10 +17,12 @@
 #include <std_msgs/Float32.h>
 
 // relevant 3rd party includes
-#include <depthai/device.hpp>
-#include <depthai/host_data_packet.hpp>
-#include <depthai/nnet/nnet_packet.hpp>
-#include <depthai/pipeline/cnn_host_pipeline.hpp>
+#include "depthai/depthai.hpp"
+
+// #include <depthai/device.hpp>
+// #include <depthai/host_data_packet.hpp>
+// #include <depthai/nnet/nnet_packet.hpp>
+// #include <depthai/pipeline/cnn_host_pipeline.hpp>
 
 // general 3rd party includes
 #include <boost/property_tree/json_parser.hpp>
@@ -116,16 +118,17 @@ private:
     ros::Time _stamp;
     double _depthai_ts_offset = -1;  // sadly, we don't have a way of measuring drift
 
-    std::unique_ptr<Device> _depthai;
+    std::unique_ptr<dai::Device> _depthai;
+    dai::Pipeline p_;
     std::map<std::string, int> _nn2depth_map;
-    std::list<std::shared_ptr<NNetPacket>> _nnet_packet;
-    std::list<std::shared_ptr<HostDataPacket>> _data_packet;
-    std::shared_ptr<CNNHostPipeline> _pipeline;
+    // std::list<std::shared_ptr<NNetPacket>> _nnet_packet;
+    // std::list<std::shared_ptr<HostDataPacket>> _data_packet;
+    dai::Pipeline _pipeline;
     std::vector<std::string> _available_streams;
-
+    std::map<std::string, int> _device_nodes_id;
     void prepareStreamConfig();
     void processPacketsAndPub();
-
+    void stereoConfig();
     void afCtrlCb(const depthai_ros_msgs::AutoFocusCtrl msg);
     void disparityConfCb(const std_msgs::Float32::ConstPtr& msg);
 

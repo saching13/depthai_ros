@@ -1,0 +1,61 @@
+depthai: 
+  ros__parameters:
+    mono_camera:
+      cam_0:
+        &left_camera
+        id: 0
+        resolution: 720
+        fps: 30
+      cam_1:
+        &right_camera
+        id: 1
+        resolution: 720
+        fps: 30
+    ColorCamera:
+      cam_0:
+        &rgb_camera
+        id: 2
+        resolution: 1080
+        fps: 30
+        interleaved: true
+        fp16: false
+    StereoDepth:
+      &stereo
+      left: *left_camera
+      right: *right_camera
+      median_filter: "1x1"
+      disparity_confidence_threshold: 200
+      enable_subpixel: true
+      enable_LR_check: true
+      enable_extended_disparity: true
+      output_rectified: true
+      output_depth: true
+      rectify_mirror_frame: true
+      RectifyEdgeFillColor: 0
+    XlinkConnect:
+      xlink_1:
+        name: "left"
+        input: *left_camera
+        frequency: 30
+      xlink_2:
+        name: "right"
+        input: *right_camera
+        frequency: 30
+      xlink_3:
+        name: "depth"
+        input: *stereo
+        frequency: 30
+      xlink_4:
+        name: "disparity"
+        input: *stereo
+        frequency: 30
+      xlink_5:
+        name: "rectified_left"
+        input: *stereo
+        frequency: 30
+      xlink_6:
+        name: "rectified_right"
+        input: *stereo
+        frequency: 30
+
+

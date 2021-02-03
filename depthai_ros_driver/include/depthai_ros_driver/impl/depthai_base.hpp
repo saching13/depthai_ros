@@ -2,7 +2,7 @@
 
 #include <ros/ros.h>
 #include <image_transport/image_transport.h>
-
+#include <XmlRpcValue.h>
 #include <depthai_ros_driver/depthai_base.hpp>
 
 namespace rr {
@@ -294,7 +294,7 @@ void DepthAIBase<Node>::onInit() {
     prepareStreamConfig();
 
     // device init
-    _depthai = std::make_unique<Device>("", _force_usb2);
+    _depthai = std::make_unique<dai::Device>(p_);
 
     _available_streams = _depthai->get_available_streams();
     _nn2depth_map = _depthai->get_nn_to_depth_bbox_mapping();
@@ -308,6 +308,27 @@ void DepthAIBase<Node>::onInit() {
     _depthai->request_af_mode(static_cast<CaptureMetadata::AutofocusMode>(4));
 
     _cameraReadTimer = nh.createTimer(ros::Duration(1. / 500), &DepthAIBase::cameraReadCb, this);
+}
+
+template <class Node>
+void DepthAIBase<Node>::stereoConfig() {
+    auto stereo = _pipeline.create<dai::node::StereoDepth>();
+    auto xoutDepth = _pipeline.create<dai::node::XLinkOut>();
+    xoutDepth->setStreamName("depth");
+    // StereoDepth
+    stereo->setConfidenceThreshold(200);
+    stereo->setRectifyEdgeFillColor(0);  // black, to better see the cutout    
+    stereo->setLeftRightCheck(lrcheck);
+    stereo->setExtendedDisparity(extended);
+    stereo->setSubpixel(subpixel);
+
+    stereo->setOutputDepth(outputDepth);
+    stereo->setOutputRectified(outputRectified);
+    
+    stereo->depth.link(xoutDepth->input);
+    
+
+
 }
 
 template <class Node>
