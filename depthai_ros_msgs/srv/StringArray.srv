@@ -1,0 +1,2 @@
+---
+string[] data # in this driver it is used to get list of devices connected 

@@ -262,12 +262,16 @@ void DepthAIBase<Node>::onInit() {
         }
     };
 
+
+    get_param(nh, std::string{}, "cmd_file", _cmd_file);
+    get_param(nh, bool{}, "force_usb2", _force_usb2);
+
     get_param(nh, std::string{}, "camera_name", _camera_name);
     get_param(nh, std::string{}, "camera_param_uri", _camera_param_uri);
     get_param(nh, std::string{}, "calibration_file", _calib_file);
-    get_param(nh, std::string{}, "cmd_file", _cmd_file);
     get_param(nh, std::string{}, "blob_file", _blob_file);
     get_param(nh, std::string{}, "blob_file_config", _blob_file_config);
+    get_param(nh, std::string{}, "device_mx_id", _blob_file_config);
 
     get_param(nh, std::vector<std::string>{}, "stream_list", _stream_list);
 
@@ -275,7 +279,6 @@ void DepthAIBase<Node>::onInit() {
     get_param(nh, bool{}, "enable_sync", _sync_video_meta);
     get_param(nh, bool{}, "full_fov_nn", _full_fov_nn);
     get_param(nh, bool{}, "disable_depth", _compute_bbox_depth);
-    get_param(nh, bool{}, "force_usb2", _force_usb2);
 
     get_param(nh, int{}, "rgb_height", _rgb_height);
     get_param(nh, int{}, "rgb_fps", _rgb_fps);
@@ -291,24 +294,165 @@ void DepthAIBase<Node>::onInit() {
         _camera_param_uri += "/";
     }
 
-    prepareStreamConfig();
+    // FIXME(Sachin): initialize pipeline_config plugin
+    _config_plugin = std::make_unique<PipelineConfig>();
 
-    // device init
-    _depthai = std::make_unique<Device>("", _force_usb2);
+    _pipeline = _config_plugin.getPipeline();
+    // _depthai = std::make_unique<device>(_pipeline;
+    _start_device_srv = nh.advertiseService("start_device", &DepthAIBase::startDevice, this);
+    _get_available_device_srv = nh.advertiseService("get_device", &DepthAIBase::getAvailableDevice, this);
+    _get_all_devices_srv = nh.advertiseService("get_device_list", &DepthAIBase::getAllAvailableDevices, this);
+    _get_all_devices_srv = nh.advertiseService("get_device_list", &DepthAIBase::startPipeline, this);
 
-    _available_streams = _depthai->get_available_streams();
-    _nn2depth_map = _depthai->get_nn_to_depth_bbox_mapping();
+}
 
-    for (const auto& stream : _available_streams) {
-        std::cout << "Available Streams: " << stream << std::endl;
+template <class Node>
+bool DepthAIBase<Node>::startDevice(depthai_ros_msgs::TriggerNamed::Request& req, depthai_ros_msgs::TriggerNamed::Response& res) {
+/**
+ * @brief So For the device initialization there are multiple ways. Add getting device by mxid. , embedded device binary functions configurable from launch file
+ * 
+ * Depthai has 7 different constructors to start the device. 
+ * Device(const Pipeline& pipeline);
+ * Device(const Pipeline& pipeline, bool usb2Mode);
+ * Device(const Pipeline& pipeline, const char* pathToCmd);
+ * Device(const Pipeline& pipeline, const std::string& pathToCmd);
+ * Device(const Pipeline& pipeline, const DeviceInfo& devInfo, bool usb2Mode = false);
+ * Device(const Pipeline& pipeline, const DeviceInfo& devInfo, const char* pathToCmd);
+ * Device(const Pipeline& pipeline, const DeviceInfo& devInfo, const std::string& pathToCmd);
+ * Add a way to handle all of them. 
+ */
+
+    // TODO(Sachin) : Add try catch here to catch for scenarios where there is no device connected or available.
+    std::string mxid = req.name;
+    if (!_depthai->isPipelineRunning())
+        if(!mx_id.empty()){
+            dai::DeviceInfo dev_info;
+            bool device_found = false;
+            std::tie(device_status, dev_info) = dai::Device::getDeviceByMxId();
+            if(!device_status) {
+                res.success = false;
+                res.message = "Unable to find the device with provided Mx id. ";
+            }
+            if(!cmd_pth.empty()) _depthai = std::make_unique<device>(_pipeline, dev_info, _cmd_file);
+            else _depthai = std::make_unique<device>(_pipeline, dev_info, _force_usb2);
+        }
+        else if(!_cmd_file.empty()){
+            _depthai = std::make_unique<device>(_pipeline, _cmd_file);
+        }
+        else _depthai = std::make_unique<device>(_pipeline, _force_usb2);
+    else 
+    {
+        res.success = false;
+        res.message = "Pipeline is already running. ";
     }
 
-    _pipeline = _depthai->create_pipeline(_pipeline_config_json);
+    res.success = true;
+    res.message = "Device initialized as requested";
 
-    _depthai->request_af_mode(static_cast<CaptureMetadata::AutofocusMode>(4));
 
-    _cameraReadTimer = nh.createTimer(ros::Duration(1. / 500), &DepthAIBase::cameraReadCb, this);
+    // bool is_started = _depthai->startPipeline();    
+    // if(is_started){
+    //     res.success = is_started;
+    //     res.message = "Device initialized and started pipeline successfully";
+    // }
+    // else{
+    //     res.success = is_started;
+    //     res.message = "Failed to initialize the pipeline. ";
+    
+    return true;
 }
+
+
+
+template <class Node>
+bool DepthAIBase<Node>::startPipeline(depthai_ros_msgs::TriggerNamed::Request& req, depthai_ros_msgs::TriggerNamed::Response& res) {
+
+    bool is_started = _depthai->startPipeline();
+    
+     auto set_camera_info_pub = [&](const string& name) {
+        const auto uri = _camera_param_uri + _camera_name + "/" + name + ".yaml";
+        _camera_info_manager[name] =
+                std::make_unique<camera_info_manager::CameraInfoManager>(ros::NodeHandle{nh, name}, name, uri);
+        _camera_info_publishers[name] = std::make_unique<ros::Publisher>(
+                nh.template advertise<sensor_msgs::CameraInfo>(name + "/camera_info", _queue_size, true)); // making it latched
+    };
+
+    auto camera_pub_callback = [&publisher = _stream_publishers](const string& name, std::shared_ptr<dai::ADatatype> data)) {
+            std::shared_ptr<dai::ImgFrame> frame = std::dynamic_pointer_cast<dai::ImgFrame>(data);
+            try {
+                
+                depth->getData().data()
+
+            }
+            catch{
+
+            }
+
+    };
+
+    if(is_started){
+        std::vector<std::string> camera_streams = _config_plugin.getCameras();
+        
+        for(auto& stream_name : camera_streams){
+            auto data_queue = _depthai->getOutputQueue(stream_name, 8, _blocking);
+            set_camera_info_pub(stream_name);
+            _stream_publishers[stream_name] = std::make_unique<ros::Publisher>(nh.template advertise<type>(stream_name + "/image_raw", _queue_size));
+
+
+        }
+
+
+
+
+    }
+}
+
+/**
+ * @brief Use this function in service to get the available devices. 
+ * This function uses getAnyAvailableDevice/getFirstAvailableDevice 
+ * member function of dpthai device object.
+ * The service contains type, and period as optional input.
+ * 
+ * @tparam Node 
+ */
+template <class Node>
+bool DepthAIBase<Node>::getAvailableDevice(depthai_ros_msgs::TriggerNamed::Request& req, depthai_ros_msgs::TriggerNamed::Response& res) {
+    std::string type = std::transform(sl.begin(), sl.end(), sl.begin(), std::tolower); 
+    dai::DeviceInfo dev_info;
+    bool device_found = false;
+    if (type == "first"){
+        std::tie(device_found, dev_info) = dai::Device::getFirstAvailableDevice();
+    }
+    else{
+        std::tie(device_found, dev_info) = dai::Device::getAnyAvailableDevice();
+    }
+
+    if (device_found){
+        res.success = device_found;
+        res.message = dev_info.getMxId();
+    }
+    else{
+        res.success = device_found;
+        res.message = "No devices found. Check your device connection."
+    }
+
+    return true;
+}
+
+/**
+ * @brief Service created executes the following function and 
+ * gets all the devices connected
+ * 
+ * @tparam Node 
+ */
+
+template <class Node>
+bool DepthAIBase<Node>::getAllAvailableDevices(depthai_ros_msgs::StringArray::Request& req, depthai_ros_msgs::StringArray::Response& res) {
+    std::vector<dai::DeviceInfo> dev_list = dai::Device::getAllAvailableDevices();
+    res.data.insert(res.data.end(), dev_list.begin(), dev_list.end());
+    return true;
+}
+
 
 template <class Node>
 void DepthAIBase<Node>::prepareStreamConfig() {

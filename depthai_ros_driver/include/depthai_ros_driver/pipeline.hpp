@@ -1,10 +1,11 @@
+#pragma once
+
 #include <vector>
 
-#include <depthai/pipeline/Node.hpp>
-#include <depthai/pipeline/Pipeline.hpp>
+#include <depthai/depthai.hpp>
 
 namespace rr {
-struct Pipeline {
+struct PipelineConfig {
     using NodeConstPtr = std::shared<const dai::Node>;
 
     /**
@@ -15,7 +16,7 @@ struct Pipeline {
     /**
      * @brief interface called by the driver to get a ready pipeline
      */
-    virtual dai::Pipeline get_pipeline() = 0;
+    virtual dai::Pipeline getPipeline() = 0;
 
     // TODO: Do these need to be virtual? Can it be implemented independently?
     /**

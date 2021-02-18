@@ -5,7 +5,9 @@
 #include <depthai_ros_msgs/Object.h>
 #include <depthai_ros_msgs/Objects.h>
 #include <depthai_ros_msgs/TriggerNamed.h>
+#include <depthai_ros_msgs/StringArray.h>
 
+#include <depthai_ros_driver/pipeline.hpp>
 // core ROS dependency includes
 #include <camera_info_manager/camera_info_manager.h>
 #include <cv_bridge/cv_bridge.h>
@@ -15,12 +17,17 @@
 // ROS1 messages
 #include <sensor_msgs/Image.h>
 #include <std_msgs/Float32.h>
+//ros pluginlib
+#include "pluginlib/class_loader.hpp"
 
 // relevant 3rd party includes
-#include <depthai/device.hpp>
-#include <depthai/host_data_packet.hpp>
-#include <depthai/nnet/nnet_packet.hpp>
-#include <depthai/pipeline/cnn_host_pipeline.hpp>
+// #include <depthai/device.hpp>
+// #include <depthai/host_data_packet.hpp>
+// #include <depthai/nnet/nnet_packet.hpp>
+// #include <depthai/pipeline/cnn_host_pipeline.hpp>
+#include <depthai/depthai.hpp>
+#include <depthai-shared/datatype/RawImgFrame.hpp>
+
 
 // general 3rd party includes
 #include <boost/property_tree/json_parser.hpp>
@@ -42,39 +49,32 @@ public:
     ~DepthAIBase() = default;
 
 private:
-    enum Stream : std::size_t {
-        // all images at the beginning
-        LEFT,
-        RIGHT,
-        RECTIFIED_LEFT,
-        RECTIFIED_RIGHT,
-        DISPARITY,
-        DISPARITY_COLOR,
-        DEPTH,
-        PREVIEW_OUT,
-        // compressed image streams
-        JPEG_OUT,
-        VIDEO,
-        // non-image streams
-        META_D2H,
-        META_OUT,
-        OBJECT_TRACKER,
-        // utility enums
-        END,
-        IMAGE_END = META_D2H,
-        UNCOMPRESSED_IMG_END = JPEG_OUT
-    };
-    std::array<std::string, Stream::END> _stream_name{"left", "right", "rectified_left", "rectified_right", "disparity",
-            "disparity_color", "depth", "previewout", "jpegout", "video", "meta_d2h", "metaout", "object_tracker"};
-    std::array<std::string, Stream::END> _topic_name{"left", "right", "rectified_left", "rectified_right", "disparity",
-            "disparity_color", "depth", "previewout", "jpeg", "mjpeg", "meta_d2h", "object_info", "object_tracker"};
+    // encoding make_pair
+    const std::unordered_map<int, std::string> encoding_enum_map({
+        {dai::RawImgFrame::Type::YUV422i        : "yuv422"    },
+        {dai::RawImgFrame::Type::RGBA8888       : "rgba8"     },
+        {dai::RawImgFrame::Type::RGB161616      : "rgb16"     }, // TODO(Sachin): This might be buggy
+        {dai::RawImgFrame::Type::RGB888i        : "rgb8"      },
+        {dai::RawImgFrame::Type::BGR888i        : "bgr8"      },
+        {dai::RawImgFrame::Type::RGBF16F16F16i  : "16FC3"     }, // FIXME(Sachin): There is no 16FC in opencv. THink of fix later
+        {dai::RawImgFrame::Type::BGRF16F16F16i  : "16FC3"     }, // FIXME(Sachin): There is no 16FC in opencv. THink of fix later
+        {dai::RawImgFrame::Type::GRAY8          : "8UC1"      },
+        {dai::RawImgFrame::Type::GRAYF16        : "16FC1"     }, // FIXME(Sachin): There is no 16FC in opencv. THink of fix later
+        {dai::RawImgFrame::Type::RAW8           : "8UC1"      },
+        {dai::RawImgFrame::Type::RAW16          : "16UC1"     },
+        {dai::RawImgFrame::Type::RGBF16F16F16i  : "16FC3"     }, // FIXME(Sachin): There is no 16FC in opencv. THink of fix later
+        {dai::RawImgFrame::Type::RGBF16F16F16i  : "16FC3"     }  // FIXME(Sachin): There is no 16FC in opencv. THink of fix later
+        {dai::RawImgFrame::Type::NV12           : "CV_bridge" },
+    });
 
-    std::array<std::unique_ptr<ros::Publisher>, Stream::END> _stream_publishers;
-    std::array<std::unique_ptr<ros::Publisher>, Stream::IMAGE_END> _camera_info_publishers;
 
-    std::array<std::unique_ptr<camera_info_manager::CameraInfoManager>, Stream::IMAGE_END> _camera_info_manager;
+    std::unordered_map<std::string, std::unique_ptr<ros::Publisher>> _stream_publishers;
+    std::unordered_map<std::string, std::unique_ptr<ros::Publisher>> _camera_info_publishers;
+
+    std::unordered_map<std::string,std::unique_ptr<camera_info_manager::CameraInfoManager>> _camera_info_manager;
     std::unique_ptr<camera_info_manager::CameraInfoManager> _defaultManager;
-    ros::ServiceServer _camera_info_default;
+    ros::ServiceServer _camera_info_default, _start_device_srv, _get_available_device_srv, _get_all_devices_srv, _start_pipeline_srv;
+    pluginlib::ClassLoader<rr::Pipeline> pipeline_loader;
 
     ros::Publisher _camera_info_pub;
 
@@ -116,11 +116,10 @@ private:
     ros::Time _stamp;
     double _depthai_ts_offset = -1;  // sadly, we don't have a way of measuring drift
 
-    std::unique_ptr<Device> _depthai;
+    std::unique_ptr<PipelineConfig> _config_plugin; 
+    std::shared_ptr<dai::Pipeline> _pipeline; 
+    std::unique_ptr<dai::Device> _depthai;
     std::map<std::string, int> _nn2depth_map;
-    std::list<std::shared_ptr<NNetPacket>> _nnet_packet;
-    std::list<std::shared_ptr<HostDataPacket>> _data_packet;
-    std::shared_ptr<CNNHostPipeline> _pipeline;
     std::vector<std::string> _available_streams;
 
     void prepareStreamConfig();
